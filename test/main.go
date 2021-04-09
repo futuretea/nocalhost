@@ -15,6 +15,7 @@ func main() {
 	if i := <-nhctl.StatusChan; i != 1 {
 		nhctl.StopChan <- 1
 	}
+	defer nhctl.UninstallBookInfo()
 	nhctl.InstallBookInfo()
 	nhctl.PortForward()
 	module := "details"

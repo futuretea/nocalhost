@@ -5,7 +5,6 @@ import (
 	"context"
 	"fmt"
 	"github.com/pkg/errors"
-	v1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"nocalhost/test/util"
 	"os"
@@ -17,7 +16,10 @@ import (
 var StopChan = make(chan int32, 1)
 var StatusChan = make(chan int32, 1)
 
+// pod's create timestamp is priority, first create should first run. needs to judge first pod is this pod or not
+// if first pod is this pod, then this pod run, else wait for
 func GetCommitId() string {
+	// this value will be set in github action workflow
 	id := os.Getenv("COMMIT_ID")
 	fmt.Printf("get id from env: %v\n", id)
 	for {
@@ -25,32 +27,38 @@ func GetCommitId() string {
 		if len(ids) <= 1 {
 			return id
 		}
-		var min = time.Now().Second()
-		for k := range ids {
-			if min > k {
-				min = k
+		var minTimestamp = time.Now().Add(1 * time.Hour).UnixNano()
+		exist := false
+		for timestamp, commitId := range ids {
+			if commitId == id {
+				exist = true
+			}
+			if minTimestamp > timestamp {
+				minTimestamp = timestamp
 			}
 		}
-		if ids[min] == id {
+		if !exist {
+			panic("this should not happen")
+		}
+		if ids[minTimestamp] == id {
 			return id
 		}
 		time.Sleep(10 * time.Second)
 	}
 }
 
-func getAllCommitId() map[int]string {
+// get all pods, pod name is taskId, we will find the first create pod, judge it's my turns ro not
+func getAllCommitId() map[int64]string {
 	podList, err := util.Client.ClientSet.CoreV1().Pods("test").List(context.TODO(), metav1.ListOptions{
 		LabelSelector: "app=test",
 	})
 	if err != nil {
 		panic(fmt.Sprintf("get commit configmap error: %v\n", err))
 	}
-	var order = make(map[int]string)
+	var order = make(map[int64]string)
 	for _, pod := range podList.Items {
-		if pod.Status.Phase == v1.PodRunning || pod.Status.Phase == v1.PodPending {
-			priority := pod.CreationTimestamp.Second()
-			order[priority] = pod.Name
-		}
+		priority := pod.CreationTimestamp.UnixNano()
+		order[priority] = pod.Name
 	}
 	return order
 }

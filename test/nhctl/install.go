@@ -13,6 +13,11 @@ func InstallBookInfo() {
 	installBookInfoRawManifest()
 }
 
+func UninstallBookInfo() {
+	cmd := "nhctl uninstall bookinfo -n test --force --kubeconfig " + util.CODING
+	util.WaitForCommandDone(cmd)
+}
+
 func installBookInfoRawManifest() {
 	cmd := "nhctl install bookinfo -u https://github.com/nocalhost/bookinfo.git -t rawManifest -n test --resource-path manifest/templates --kubeconfig " + util.CODING
 	if ok, _ := util.WaitForCommandDone(cmd); !ok {
