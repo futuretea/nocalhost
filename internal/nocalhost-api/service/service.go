@@ -15,6 +15,8 @@ package service
 
 import (
 	"context"
+	"github.com/gin-gonic/gin"
+	"net/http/httptest"
 	"nocalhost/internal/nocalhost-api/global"
 	"nocalhost/internal/nocalhost-api/model"
 	"nocalhost/internal/nocalhost-api/service/application"
@@ -24,6 +26,7 @@ import (
 	"nocalhost/internal/nocalhost-api/service/cluster_user"
 	"nocalhost/internal/nocalhost-api/service/pre_pull"
 	"nocalhost/internal/nocalhost-api/service/user"
+	"nocalhost/pkg/nocalhost-api/app/api/v1/service_account"
 	"nocalhost/pkg/nocalhost-api/pkg/clientgo"
 	"nocalhost/pkg/nocalhost-api/pkg/log"
 	"nocalhost/pkg/nocalhost-api/pkg/setupcluster"
@@ -112,6 +115,45 @@ func (s *Service) dataMigrate() {
 	log.Info("Migrate data if needed... ")
 
 	// adapt cluster_user to application_user
+	s.migrateClusterUseToApplicationUser()
+
+	// adapt devSpace to Sa -> RoleBinding
+	s.migrateClusterUseToRoleBinding()
+}
+
+func (s *Service) generateServiceAccountNameForUser() {
+	list, err := s.userSvc.GetUserList(context.TODO())
+	if err != nil {
+		log.Infof("Error while generate user sa: %+v", err)
+	}
+
+	for _, u := range list {
+		u := u
+		go func() {
+			if u.SaName == "" {
+				if err := s.userSvc.UpdateServiceAccountName(context.TODO(), u.ID, model.GenerateSaName()); err != nil {
+					log.Infof("Error while generate user %d's sa: %+v", u.ID, err)
+				}
+			}
+		}()
+	}
+}
+
+func (s *Service) migrateClusterUseToRoleBinding() {
+	list, err := s.clusterUserSvc.GetList(context.TODO(), model.ClusterUserModel{})
+	if err != nil {
+		log.Infof("Error while migrate data: %+v", err)
+	}
+
+	// do not need to care the gin context
+	c, _ := gin.CreateTestContext(httptest.NewRecorder())
+
+	for _, clusterUser := range list {
+		service_account.AuthorizeNsToUser(c, clusterUser.ClusterId, clusterUser.UserId, clusterUser.Namespace)
+	}
+}
+
+func (s *Service) migrateClusterUseToApplicationUser() {
 	list, err := s.clusterUserSvc.GetList(context.TODO(), model.ClusterUserModel{})
 	if err != nil {
 		log.Infof("Error while migrate data: %+v", err)
@@ -130,7 +172,7 @@ func (s *Service) dataMigrate() {
 		}
 
 		_, err := s.applicationUserSvc.GetByApplicationIdAndUserId(context.TODO(), applicationId, userId)
-		if err != nil && strings.Contains(err.Error(),"record not found"){
+		if err != nil && strings.Contains(err.Error(), "record not found") {
 			err := s.ApplicationUser().BatchInsert(context.TODO(), applicationId, []uint64{userId})
 			if err != nil {
 				log.Infof("Error while migrate data[BatchInsert]: %+v", err)
